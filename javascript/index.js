@@ -2,11 +2,32 @@ const fs = require("fs").promises;
 const axios = require("axios");
 const bitcoin = require("bitcoin-core");
 
-async function callCln(method, params = {}) {
+// Call Alice's Lightning node via CLN REST API on port 3010
+async function callAliceLn(method, params = {}) {
   const response = await axios.post(
     `http://localhost:3010/v1/${method}`,
     params,
-    { headers: { Rune: process.env.CLN_RUNE } },
+    { headers: { Rune: process.env.ALICE_RUNE } },
+  );
+  return response.data;
+}
+
+// Call Bob's Lightning node via CLN REST API on port 3011
+async function callBobLn(method, params = {}) {
+  const response = await axios.post(
+    `http://localhost:3011/v1/${method}`,
+    params,
+    { headers: { Rune: process.env.BOB_RUNE } },
+  );
+  return response.data;
+}
+
+// Call Carol's Lightning node via CLN REST API on port 3012
+async function callCarolLn(method, params = {}) {
+  const response = await axios.post(
+    `http://localhost:3012/v1/${method}`,
+    params,
+    { headers: { Rune: process.env.CAROL_RUNE } },
   );
   return response.data;
 }
@@ -22,35 +43,65 @@ async function main() {
 
   console.log("Bitcoin Node Info:", await bitcoinClient.getBlockchainInfo());
 
-  const lnInfo = await callCln("getinfo");
-  console.log("Lightning Node Info:", lnInfo);
+  const alice_info = await callAliceLn("getinfo");
+  console.log("Alice Node Info:", alice_info);
 
-    // Create a new address for funding using lightning-cli and store it in CLN_ADDRESS
+  const bob_info = await callBobLn("getinfo");
+  console.log("Bob Node Info:", bob_info);
 
-    // Check if wallet exists, if not Create a bitcoin wallet named 'mining_wallet' using bitcoin-cli for mining
+  const carol_info = await callCarolLn("getinfo");
+  console.log("Carol Node Info:", carol_info);
 
-    // Generate a new address and mine blocks to it. How many blocks need to mined? Why?
+  // Create a bitcoin wallet named 'mining_wallet' if it doesn't exist
 
-    // Fund the Lightning node by sending 0.1 BTC from the mining wallet to CLN_ADDRESS
+  // Generate a mining address and mine initial blocks
 
-    // Confirm the funding transaction by mining 6 blocks
+  // Create and fund an on-chain address for Alice
 
-    // Verify Lightning wallet balance using lightning-cli listfunds
+  // Create and fund an on-chain address for Bob
 
-    // Create an invoice with parameters and store the invoice string:
-    // - Amount: 50,000 satoshis (50000000 millisatoshis)
-    // - Label: Generate unique label using timestamp (e.g., "invoice_$(date +%s)")
-    // - Description: "Coffee Payment"
-    // - Expiry: 3600 seconds
+  // Mine blocks to confirm funding transactions
 
-    // Decode the invoice string using lightning-cli decodepay and verify the parameters
+  // Verify Alice's on-chain balance
 
-    // Output the invoice details in the specified format to out.txt
-    // - Payment hash
-    // - BOLT11 invoice string
-    // - Amount
-    // - Description
-    // - Expiry time
+  // Verify Bob's on-chain balance
+
+  // Get node IDs for Alice, Bob, and Carol
+
+  // Connect them as peers
+
+  // Alice opens a 500,000 sat channel with Bob
+
+  // Bob opens a 300,000 sat channel with Carol
+
+  // Mine at least 6 blocks to confirm channels
+
+  // Wait for channels to reach CHANNELD_NORMAL state
+
+  // Carol generates a 100,000 sat invoice with label "multihop_<timestamp>" and description "Multi-Hop Payment"
+
+  // Extract the BOLT11 string and payment hash from the invoice
+
+  // Alice pays Carol's BOLT11 invoice (routed through Bob)
+
+  // Extract payment preimage and status
+
+  // Verify Alice's balance decreased
+
+  // Verify Carol's balance increased
+
+  // Verify Bob's balance. Is there any difference? Why is it?
+
+  // Verify Bob forwarded the payment using listforwards and extract payment_hash from it
+
+  // Write to out.txt:
+  // Payment Hash
+  // Payment Preimage
+  // BOLT11 Invoice
+  // Payer_ID
+  // Payee_ID
+  // Fee_msat
+  // Payment_Hash from Bob's forwarded payment
 }
 
 main().catch(err => {

@@ -1,8 +1,9 @@
 import { readFileSync } from "fs";
 import { execSync } from "child_process";
+import { createHash } from "crypto";
 
-function lnCli(command: string): any {
-    const result = execSync(`docker exec ln-node lightning-cli --network=regtest ${command}`, {
+function lnCli(node: string, command: string): any {
+    const result = execSync(`docker exec ${node} lightning-cli --network=regtest ${command}`, {
         encoding: 'utf-8'
     });
     return JSON.parse(result);
@@ -10,71 +11,115 @@ function lnCli(command: string): any {
 
 describe('Evaluate submission', () => {
     let paymentHash: string;
+    let preimage: string;
     let bolt11: string;
-    let amount: number;
-    let description: string;
-    let expiry: number;
+    let payerId: string;
+    let payeeId: string;
+    let feeMsat: number;
+    let bobForwardedHash: string;
 
-    it('should read and parse out.txt', () => {
+    it('should read and parse out.txt with 7 lines', () => {
         const lines = readFileSync('out.txt', 'utf-8').trim().split('\n');
-        expect(lines).toHaveLength(5);
+        expect(lines).toHaveLength(7);
 
         paymentHash = lines[0].trim();
-        bolt11 = lines[1].trim();
-        amount = parseInt(lines[2].trim(), 10);
-        description = lines[3].trim();
-        expiry = parseInt(lines[4].trim(), 10);
+        preimage = lines[1].trim();
+        bolt11 = lines[2].trim();
+        payerId = lines[3].trim();
+        payeeId = lines[4].trim();
+        feeMsat = parseInt(lines[5].trim(), 10);
+        bobForwardedHash = lines[6].trim();
 
         expect(paymentHash).toBeTruthy();
+        expect(preimage).toBeTruthy();
         expect(bolt11).toBeTruthy();
-        expect(amount).toBeDefined();
-        expect(description).toBeTruthy();
-        expect(expiry).toBeDefined();
+        expect(payerId).toBeTruthy();
+        expect(payeeId).toBeTruthy();
+        expect(feeMsat).toBeDefined();
+        expect(bobForwardedHash).toBeTruthy();
     });
 
     it('should have valid payment hash format (64 hex characters)', () => {
         expect(paymentHash).toMatch(/^[a-f0-9]{64}$/);
-        expect(paymentHash.length).toBe(64);
+    });
+
+    it('should have valid preimage format (64 hex characters)', () => {
+        expect(preimage).toMatch(/^[a-f0-9]{64}$/);
     });
 
     it('should have valid BOLT11 invoice format', () => {
-        expect(bolt11).toMatch(/^lnbcrt[a-z0-9]+$/i);
+        expect(bolt11).toMatch(/^lnbcrt/i);
         expect(bolt11.length).toBeGreaterThan(100);
     });
 
-    it('should have description as "Coffee Payment"', () => {
-        expect(description).toBe('Coffee Payment');
+    it('should have SHA256(preimage) equal payment hash', () => {
+        const hash = createHash('sha256')
+            .update(Buffer.from(preimage, 'hex'))
+            .digest('hex');
+        expect(hash).toBe(paymentHash);
     });
 
-    it('should have amount as 50000000', () => {
-        expect(amount).toBe(50000000)
+    it('should have Bob forwarded payment hash match payment hash', () => {
+        expect(bobForwardedHash).toMatch(/^[a-f0-9]{64}$/);
+        expect(bobForwardedHash).toBe(paymentHash);
     });
 
-    it('should have expiry as 3600 seconds', () => {
-        expect(expiry).toBe(3600);
+    it('should verify payment is complete via Alice', () => {
+        const pays = lnCli('alice', `listpays`);
+        const pay = pays.pays.find((p: any) => p.payment_hash === paymentHash);
+
+        expect(pay).toBeDefined();
+        expect(pay.status).toBe('complete');
     });
 
-    it('should verify invoice details via lightning-cli', () => {
-        const decoded = lnCli(`decodepay ${bolt11}`);
-
-        expect(decoded).toBeDefined();
-        expect(decoded.payment_hash).toBe(paymentHash);
-        expect(decoded.amount_msat).toBe(50000000);
-        expect(decoded.description).toBe('Coffee Payment');
-        expect(decoded.expiry).toBe(3600);
-    });
-
-    it('should have valid invoice in node', () => {
-        const invoices = lnCli('listinvoices');
-
-        expect(invoices.invoices).toBeDefined();
-        expect(invoices.invoices.length).toBeGreaterThan(0);
-
+    it('should verify invoice is paid via Carol', () => {
+        const invoices = lnCli('carol', 'listinvoices');
         const invoice = invoices.invoices.find((inv: any) => inv.payment_hash === paymentHash);
 
         expect(invoice).toBeDefined();
-        expect(invoice.bolt11).toBe(bolt11);
-        expect(invoice.amount_msat).toBe(50000000);
-        expect(invoice.description).toBe('Coffee Payment');
+        expect(invoice.status).toBe('paid');
+        expect(invoice.amount_msat).toBe(100000000);
+    });
+
+    it('should verify Alice has a channel with Bob', () => {
+        const aliceChannels = lnCli('alice', 'listpeerchannels');
+        const bobInfo = lnCli('bob', 'getinfo');
+
+        const channelWithBob = aliceChannels.channels.find(
+            (ch: any) => ch.peer_id === bobInfo.id
+        );
+
+        expect(channelWithBob).toBeDefined();
+        expect(channelWithBob.state).toBe('CHANNELD_NORMAL');
+    });
+
+    it('should verify Bob has a channel with Carol', () => {
+        const bobChannels = lnCli('bob', 'listpeerchannels');
+        const carolInfo = lnCli('carol', 'getinfo');
+
+        const channelWithCarol = bobChannels.channels.find(
+            (ch: any) => ch.peer_id === carolInfo.id
+        );
+
+        expect(channelWithCarol).toBeDefined();
+        expect(channelWithCarol.state).toBe('CHANNELD_NORMAL');
+    });
+
+    it('should verify Bob forwarded the payment', () => {
+        const forwards = lnCli('bob', 'listforwards');
+        const forward = forwards.forwards.find(
+            (f: any) => f.status === 'settled'
+        );
+
+        expect(forward).toBeDefined();
+        expect(forward.status).toBe('settled');
+        expect(parseInt(forward.fee_msat)).toBeGreaterThanOrEqual(0);
+
+        const htlcs = lnCli('bob', 'listhtlcs');
+        const htlc = htlcs.htlcs.find(
+            (h: any) => h.payment_hash === paymentHash
+        );
+        expect(htlc).toBeDefined();
+        expect(htlc.payment_hash).toBe(paymentHash);
     });
 });
