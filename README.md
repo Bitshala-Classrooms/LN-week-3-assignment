@@ -1,4 +1,4 @@
-# Mastering Lightning Network - Week 3: Multi-Hop Payment Routing
+# Mastering Lightning Network - Exercise 3: Multi-Hop Payment Routing
 
 ## Overview
 
